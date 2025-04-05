@@ -3,9 +3,6 @@ from dotenv import load_dotenv
 import os
 import json
 import requests
-import base64
-import google.generativeai as genai
-import mimetypes
 import time
 from typing import Any, Optional, Dict, List
 from mcp.server.fastmcp import FastMCP
@@ -16,13 +13,11 @@ import sys
 # Initialize FastMCP server
 mcp = FastMCP("canvas")
 
-# Print Gemini API version for debugging
-try:
-    genai_version = getattr(genai, "__version__", "unknown")
-    print(f"Using google.generativeai version: {genai_version}")
-except Exception as e:
-    print(f"Could not determine google.generativeai version: {e}")
+# Hard-coded API key (replace with your actual API key if you don't want to use environment variables)
+# If this is set, it will be used instead of looking for environment variables
+HARD_CODED_CANVAS_API_KEY = "12436~kGccePMt8M2H6v7UvzrtKxYT99eKEECfA2ZDw9RxwAJQkntvH2meDByRFKeMYECe"
 
+# Load environment variables from .env file (only used if HARD_CODED_CANVAS_API_KEY is empty)
 load_dotenv()
 
 # Simple in-memory cache
@@ -105,12 +100,12 @@ async def get_courses():
         return cached_courses
 
     try:
-        url = "https://canvas.asu.edu/api/v1/courses?page=1&per_page=100"
+        url = "https://canvas.kau.se/api/v1/courses?page=1&per_page=100"
 
-        # Check if API key is available
-        api_key = os.getenv('CANVAS_API_KEY')
+        # Check if API key is available (first check hard-coded value, then environment variable)
+        api_key = HARD_CODED_CANVAS_API_KEY or os.getenv('CANVAS_API_KEY')
         if not api_key:
-            print("Error: CANVAS_API_KEY environment variable not set")
+            print("Error: No Canvas API key available. Either set HARD_CODED_CANVAS_API_KEY in the code or provide CANVAS_API_KEY environment variable")
             return None
 
         headers = {
@@ -172,12 +167,12 @@ async def get_modules(course_id):
         return cached_modules
 
     try:
-        url = f"https://canvas.asu.edu/api/v1/courses/{course_id}/modules"
+        url = f"https://canvas.kau.se/api/v1/courses/{course_id}/modules"
 
-        # Check if API key is available
-        api_key = os.getenv('CANVAS_API_KEY')
+        # Check if API key is available (first check hard-coded value, then environment variable)
+        api_key = HARD_CODED_CANVAS_API_KEY or os.getenv('CANVAS_API_KEY')
         if not api_key:
-            print("Error: CANVAS_API_KEY environment variable not set")
+            print("Error: No Canvas API key available. Either set HARD_CODED_CANVAS_API_KEY in the code or provide CANVAS_API_KEY environment variable")
             return None
 
         headers = {
@@ -232,12 +227,12 @@ async def get_module_items(course_id, module_id):
         return cached_items
 
     try:
-        url = f"https://canvas.asu.edu/api/v1/courses/{course_id}/modules/{module_id}/items?per_page=100"
+        url = f"https://canvas.kau.se/api/v1/courses/{course_id}/modules/{module_id}/items?per_page=100"
 
-        # Check if API key is available
-        api_key = os.getenv('CANVAS_API_KEY')
+        # Check if API key is available (first check hard-coded value, then environment variable)
+        api_key = HARD_CODED_CANVAS_API_KEY or os.getenv('CANVAS_API_KEY')
         if not api_key:
-            print("Error: CANVAS_API_KEY environment variable not set")
+            print("Error: No Canvas API key available. Either set HARD_CODED_CANVAS_API_KEY in the code or provide CANVAS_API_KEY environment variable")
             return None
 
         headers = {
@@ -288,12 +283,12 @@ async def get_file_url(course_id, file_id):
         return cached_url
 
     try:
-        url = f"https://canvas.asu.edu/api/v1/courses/{course_id}/files/{file_id}"
+        url = f"https://canvas.kau.se/api/v1/courses/{course_id}/files/{file_id}"
 
-        # Check if API key is available
-        api_key = os.getenv('CANVAS_API_KEY')
+        # Check if API key is available (first check hard-coded value, then environment variable)
+        api_key = HARD_CODED_CANVAS_API_KEY or os.getenv('CANVAS_API_KEY')
         if not api_key:
-            print("Error: CANVAS_API_KEY environment variable not set")
+            print("Error: No Canvas API key available. Either set HARD_CODED_CANVAS_API_KEY in the code or provide CANVAS_API_KEY environment variable")
             return None
 
         headers = {
@@ -332,87 +327,17 @@ async def get_file_url(course_id, file_id):
         print(traceback.format_exc())
         return None
 
-def encode_image_to_base64(image_path):
-    """Encode an image to base64 for use with Gemini"""
-    with open(image_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-
-    # Get MIME type
-    mime_type, _ = mimetypes.guess_type(image_path)
-    if not mime_type:
-        # Default to png if can't determine type
-        mime_type = "image/png"
-
-    return encoded_string, mime_type
-
 def analyze_image_with_gemini(image_path):
     """
-    Use Gemini to analyze an image and extract the learning concept
-    Returns a description of the concept in the image
+    Simplified version that doesn't use Gemini
+    Always returns None as image analysis is no longer supported
     """
-    try:
-        # Check if API key is available
-        api_key = os.getenv('GOOGLE_API_KEY')
-        if not api_key:
-            print("Error: GOOGLE_API_KEY environment variable not set")
-            return None
-
-        # Initialize Gemini
-        genai.configure(api_key=api_key)
-
-        # Create a model instance for multimodal generation
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
-        # Check if file exists
-        if not os.path.exists(image_path):
-            print(f"Error: Image file does not exist: {image_path}")
-            return None
-
-        # Encode image
-        try:
-            image_data, mime_type = encode_image_to_base64(image_path)
-        except Exception as e:
-            print(f"Error encoding image: {e}")
-            return None
-
-        # Create the prompt for image analysis
-        prompt = """
-        This is an educational image. Please analyze it and extract the main learning concept 
-        or topic being illustrated. Describe what subject area this relates to and any key 
-        terminology visible in the image. Give your response as a detailed query that I could
-        use to find learning resources about this topic.
-        """
-
-        # Prepare the image for the API
-        image_parts = [
-            {
-                "mime_type": mime_type,
-                "data": image_data
-            }
-        ]
-
-        # Generate content with the image
-        try:
-            response = model.generate_content([prompt, *image_parts])
-            # Extract the query from the response
-            return response.text
-        except Exception as e:
-            import traceback, sys
-            print(f"Error from Gemini API for image analysis: {e}")
-            print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-            print(traceback.format_exc())
-            return None
-
-    except Exception as e:
-        import traceback, sys
-        print(f"Unexpected error in analyze_image_with_gemini: {e}")
-        print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-        print(traceback.format_exc())
-        return None
+    print(f"Image analysis is no longer supported. Ignoring image: {image_path}")
+    return None
 
 def analyze_query_with_gemini(query, courses, course_modules=None):
     """
-    Use Gemini to analyze the student's query and determine relevant course and modules
+    Simplified version that uses keyword matching instead of Gemini
     Returns a dict with course_id, module_ids, and reasoning
     """
     # Check cache first
@@ -433,187 +358,86 @@ def analyze_query_with_gemini(query, courses, course_modules=None):
             return cached_analysis
 
     try:
-        # Check if API key is available
-        api_key = os.getenv('GOOGLE_API_KEY') or "AIzaSyAkgIwBlXvh67IuCVvi0ZNvtjQDcB-RyVg"
-        if not api_key:
-            print("Error: GOOGLE_API_KEY environment variable not set")
-            return None
-
-        # Initialize Gemini
-        genai.configure(api_key=api_key)
-
-        # Create a model instance
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
-        # Format the courses as a list for the prompt
-        courses_list = "\n".join([f"- {name}" for name, id in courses.items()])
-
-        # Create the initial prompt to identify the course
         if course_modules is None:
             # First stage: identify the correct course
-            prompt = f"""
-            You are an AI assistant for educational content. A student has the following question:
+            # Extract keywords from the query (words longer than 3 characters)
+            query_keywords = [word.lower() for word in query.split() if len(word) > 3]
 
-            "{query}"
+            # Find the best matching course based on keyword overlap
+            best_match = None
+            best_score = 0
+            best_overlap = 0
 
-            Based on this question, which of the following courses is the student most likely referring to? 
-            Be very specific in your match and don't default to the first course unless absolutely necessary.
-            Look for subject matter keywords in the query and match them to the course titles.
+            for name, id in courses.items():
+                # Extract keywords from the course name
+                course_keywords = [word.lower() for word in name.split() if len(word) > 3]
 
-            Provide your answer as a JSON object with the fields: 
-            - course_name: The name of the most relevant course (MUST exactly match one of the provided course names)
-            - confidence: A score from 0-1 indicating your confidence
-            - reasoning: A brief explanation of why you chose this course
+                # Calculate overlap score
+                overlap = sum(1 for keyword in query_keywords if any(keyword in course_word for course_word in course_keywords))
+                if overlap > 0:
+                    score = overlap / len(query_keywords) if query_keywords else 0
 
-            Available courses:
-            {courses_list}
+                    if score > best_score or (score == best_score and overlap > best_overlap):
+                        best_score = score
+                        best_overlap = overlap
+                        best_match = name
 
-            Think step by step:
-            1. What subjects or topics does the query mention?
-            2. Which course titles contain similar subjects or topics?
-            3. Only choose a course if you're confident there's a good match
-            4. If there's no clear match, select the most general course that might cover the topic
+            # If no good match found, use the first course as fallback
+            if not best_match and courses:
+                best_match = next(iter(courses.keys()))
+                best_score = 0.1
 
-            IMPORTANT: Return only the JSON object without any formatting, markdown, or code blocks.
-            """
-
-            # Add timeout to prevent hanging requests
-            response = model.generate_content(prompt)
-            try:
-                # Clean the response text to handle potential markdown code blocks
-                response_text = response.text
-
-                # Check if response contains markdown code blocks
-                if "```json" in response_text:
-                    # Extract the JSON content from between the code block markers
-                    import re
-                    json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-                    if json_match:
-                        response_text = json_match.group(1)
-                    else:
-                        # If we can't extract with regex, try a simpler approach
-                        response_text = response_text.replace("```json", "").replace("```", "")
-
-                # Parse the result to get the course
-                result = json.loads(response_text)
-
-                # Validate the course name to ensure it's in the list
-                if "course_name" in result and result["course_name"] not in courses:
-                    print(f"Warning: Gemini returned an invalid course name: {result['course_name']}")
-
-                    # Try to find a close match
-                    best_match = None
-                    best_score = 0
-                    for name in courses:
-                        # Simple similarity score based on character overlap
-                        similarity = sum(1 for a, b in zip(name.lower(), result["course_name"].lower()) if a == b)
-                        score = similarity / max(len(name), len(result["course_name"]))
-                        if score > best_score:
-                            best_score = score
-                            best_match = name
-
-                    if best_score > 0.5:
-                        print(f"Found close match: {best_match} (score: {best_score})")
-                        result["course_name"] = best_match
-                        result["reasoning"] += f" (fixed invalid course name to closest match)"
-                    else:
-                        return None
+            if best_match:
+                result = {
+                    "course_name": best_match,
+                    "confidence": best_score,
+                    "reasoning": f"Found {best_overlap} keyword matches between query and course name"
+                }
 
                 # Cache the result
                 cache_set("course_analysis", result, cache_key)
-
                 return result
-            except Exception as e:
-                # Fallback if the response isn't proper JSON
-                import traceback, sys
-                print(f"Error parsing Gemini response: {e}")
-                print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-                print(traceback.format_exc())
-                print(f"Response text: {response.text}")
+            else:
                 return None
         else:
-            # Second stage: identify relevant modules in the course
-            modules_list = "\n".join([f"- {module['name']}" for module in course_modules])
+            # Second stage: identify relevant modules
+            # Extract keywords from the query (words longer than 3 characters)
+            query_keywords = [word.lower() for word in query.split() if len(word) > 3]
 
-            prompt = f"""
-            You are an AI assistant for educational content. A student has the following question:
+            # Find modules with matching keywords
+            relevant_modules = []
+            relevance_explanations = {}
 
-            "{query}"
+            for module in course_modules:
+                module_name = module["name"]
+                module_keywords = [word.lower() for word in module_name.split() if len(word) > 3]
 
-            Based on this question, which of the following modules in the course are most relevant?
-            Return a JSON object with:
-            - module_names: An array of names of the most relevant modules (maximum 3)
-            - relevance_explanations: Brief explanation for each module's relevance
+                # Calculate overlap score
+                overlap = sum(1 for keyword in query_keywords if any(keyword in module_word for module_word in module_keywords))
+                if overlap > 0:
+                    relevant_modules.append(module_name)
+                    relevance_explanations[module_name] = f"Found {overlap} keyword matches"
 
-            Available modules:
-            {modules_list}
+            # Limit to top 3 modules
+            if len(relevant_modules) > 3:
+                relevant_modules = relevant_modules[:3]
 
-            Think step by step:
-            1. What specific topics or concepts does the query ask about?
-            2. Which module titles seem to cover these topics?
-            3. Choose modules that are most likely to contain resources answering the query
+            # If no relevant modules found, include the first module as fallback
+            if not relevant_modules and course_modules:
+                relevant_modules = [course_modules[0]["name"]]
+                relevance_explanations[course_modules[0]["name"]] = "Default module (no keyword matches found)"
 
-            IMPORTANT: Return only the JSON object without any formatting, markdown, or code blocks.
-            """
+            result = {
+                "module_names": relevant_modules,
+                "relevance_explanations": relevance_explanations
+            }
 
-            # Add timeout to prevent hanging requests
-            response = model.generate_content(prompt)
-            try:
-                # Clean the response text to handle potential markdown code blocks
-                response_text = response.text
+            # Cache the result
+            course_id = next(iter(courses.values()))  # Get any course ID to use in cache key
+            cache_key = f"{course_id}_{query.lower()[:100]}"
+            cache_set("module_analysis", result, cache_key)
 
-                # Check if response contains markdown code blocks
-                if "```json" in response_text:
-                    # Extract the JSON content from between the code block markers
-                    import re
-                    json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-                    if json_match:
-                        response_text = json_match.group(1)
-                    else:
-                        # If we can't extract with regex, try a simpler approach
-                        response_text = response_text.replace("```json", "").replace("```", "")
-
-                # Parse the result to get the modules
-                result = json.loads(response_text)
-
-                # Validate module names
-                if "module_names" in result:
-                    valid_module_names = [module["name"] for module in course_modules]
-                    valid_results = []
-
-                    for name in result["module_names"]:
-                        if name in valid_module_names:
-                            valid_results.append(name)
-                        else:
-                            print(f"Warning: Invalid module name from Gemini: {name}")
-                            # Try to find a close match
-                            for valid_name in valid_module_names:
-                                if name.lower() in valid_name.lower() or valid_name.lower() in name.lower():
-                                    print(f"Found close match: {valid_name}")
-                                    valid_results.append(valid_name)
-                                    break
-
-                    # Update with only valid module names
-                    result["module_names"] = valid_results
-
-                    # If no valid modules found, return None
-                    if not valid_results:
-                        return None
-
-                # Cache the result
-                course_id = next(iter(courses.values()))  # Get any course ID to use in cache key
-                cache_key = f"{course_id}_{query.lower()[:100]}"
-                cache_set("module_analysis", result, cache_key)
-
-                return result
-            except Exception as e:
-                # Fallback if the response isn't proper JSON
-                import traceback, sys
-                print(f"Error parsing Gemini response: {e}")
-                print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-                print(traceback.format_exc())
-                print(f"Response text: {response.text}")
-                return None
+            return result
     except Exception as e:
         import traceback, sys
         print(f"Error in analyze_query_with_gemini: {e}")
@@ -623,7 +447,8 @@ def analyze_query_with_gemini(query, courses, course_modules=None):
 
 def analyze_resource_relevance(query, resource_items, course_name, module_name):
     """
-    Use Gemini to analyze which resources are most relevant to the student's query
+    Simplified version that uses keyword matching instead of Gemini
+    Returns a dict with resource_indices, relevance_scores, and reasoning
     """
     # Check cache first
     cache_key = f"{course_name}_{module_name}_{query.lower()[:100]}"
@@ -633,80 +458,66 @@ def analyze_resource_relevance(query, resource_items, course_name, module_name):
         return cached_analysis
 
     try:
-        # Check if API key is available
-        api_key = os.getenv('GOOGLE_API_KEY') or "AIzaSyAkgIwBlXvh67IuCVvi0ZNvtjQDcB-RyVg"
-        if not api_key:
-            print("Error: GOOGLE_API_KEY environment variable not set")
+        # Extract keywords from the query (words longer than 3 characters)
+        query_keywords = [word.lower() for word in query.split() if len(word) > 3]
+
+        # If no keywords found, use all words
+        if not query_keywords:
+            query_keywords = [word.lower() for word in query.split()]
+
+        # Calculate relevance scores for each resource
+        resource_scores = []
+
+        for idx, item in enumerate(resource_items):
+            title = item.get('title', '').lower()
+            item_type = item.get('type', '').lower()
+
+            # Skip certain types of items that are less likely to be content
+            if item_type in ['ExternalUrl', 'SubHeader']:
+                continue
+
+            # Calculate keyword matches in title
+            title_words = [word.lower() for word in title.split()]
+            matches = sum(1 for keyword in query_keywords if any(keyword in word for word in title_words))
+
+            # Assign a base score based on item type
+            type_score = 0.5
+            if item_type == 'File':
+                type_score = 0.8  # Files are usually more relevant
+            elif item_type == 'Assignment':
+                type_score = 0.7  # Assignments are also relevant
+            elif item_type == 'Page':
+                type_score = 0.6  # Pages are somewhat relevant
+
+            # Calculate final score
+            if matches > 0:
+                # More matches = higher score
+                score = min(0.9, 0.3 + (matches * 0.2) + type_score * 0.5)
+            else:
+                # No matches = lower score based on type
+                score = type_score * 0.3
+
+            resource_scores.append((idx, score))
+
+        # Sort by score (descending) and take top 5
+        resource_scores.sort(key=lambda x: x[1], reverse=True)
+        top_resources = resource_scores[:5]
+
+        # If no resources found, return None
+        if not top_resources:
             return None
 
-        # Initialize Gemini
-        genai.configure(api_key=api_key)
+        # Format the result
+        result = {
+            "resource_indices": [idx for idx, _ in top_resources],
+            "relevance_scores": [score for _, score in top_resources],
+            "reasoning": f"Found resources matching {len(query_keywords)} keywords from query"
+        }
 
-        # Create a model instance
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Cache the result
+        cache_set("resource_analysis", result, cache_key)
 
-        # Optimize: Only include essential information for each resource
-        resources_list = "\n".join([f"- {idx}: {item.get('title', 'Untitled')} (Type: {item.get('type', 'Unknown')})" 
-                                for idx, item in enumerate(resource_items)])
-
-        prompt = f"""
-        You are an AI assistant for educational content. A student has the following question:
-
-        "{query}"
-
-        This question relates to the course "{course_name}" in the module "{module_name}".
-
-        Based on this question, which of the following resources would be most helpful to the student?
-        Return a JSON object with:
-        - resource_indices: An array of indices (0-based) of the most relevant resources (maximum 5)
-        - relevance_scores: An array of relevance scores (0-1) corresponding to each resource
-        - reasoning: Brief explanation of why these resources are relevant
-
-        Available resources:
-        {resources_list}
-
-        IMPORTANT: Return only the JSON object without any formatting, markdown, or code blocks.
-        """
-
-        try:
-            # Generate content without timeout
-            response = model.generate_content(prompt)
-
-            # Clean the response text to handle potential markdown code blocks
-            response_text = response.text
-
-            # Check if response contains markdown code blocks
-            if "```json" in response_text:
-                # Extract the JSON content from between the code block markers
-                import re
-                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-                if json_match:
-                    response_text = json_match.group(1)
-                else:
-                    # If we can't extract with regex, try a simpler approach
-                    response_text = response_text.replace("```json", "").replace("```", "")
-
-            # Parse the result to get the relevant resources
-            result = json.loads(response_text)
-
-            # Cache the result
-            cache_set("resource_analysis", result, cache_key)
-
-            return result
-        except json.JSONDecodeError as e:
-            # Fallback if the response isn't proper JSON
-            import traceback, sys
-            print(f"Error parsing Gemini response for resource relevance: {e}")
-            print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-            print(traceback.format_exc())
-            print(f"Response text: {response.text}")
-            return None
-        except Exception as e:
-            import traceback, sys
-            print(f"Error from Gemini API for resource relevance: {e}")
-            print(f"Line number: {sys.exc_info()[-1].tb_lineno}")
-            print(traceback.format_exc())
-            return None
+        return result
 
     except Exception as e:
         import traceback, sys
@@ -990,7 +801,7 @@ async def get_course_assignments(course_id: str, bucket: str = None):
 
     try:
         # Build URL with optional bucket parameter
-        url = f"https://canvas.asu.edu/api/v1/courses/{course_id}/assignments"
+        url = f"https://canvas.kau.se/api/v1/courses/{course_id}/assignments"
         params = {
             "order_by": "due_at",
             "per_page": 100,  # Get max assignments per page
@@ -999,10 +810,10 @@ async def get_course_assignments(course_id: str, bucket: str = None):
         if bucket:
             params["bucket"] = bucket
 
-        # Check if API key is available
-        api_key = os.getenv('CANVAS_API_KEY')
+        # Check if API key is available (first check hard-coded value, then environment variable)
+        api_key = HARD_CODED_CANVAS_API_KEY or os.getenv('CANVAS_API_KEY')
         if not api_key:
-            print("Error: CANVAS_API_KEY environment variable not set")
+            print("Error: No Canvas API key available. Either set HARD_CODED_CANVAS_API_KEY in the code or provide CANVAS_API_KEY environment variable")
             return None
 
         headers = {

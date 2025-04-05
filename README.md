@@ -2,9 +2,7 @@
 
 [![smithery badge](https://smithery.ai/badge/@aryankeluskar/canvas-mcp)](https://smithery.ai/server/@aryankeluskar/canvas-mcp)
 
-Canvas MCP is a set of tools that allows your AI agents to interact with Canvas LMS and Gradescope.
-
-![gradescope](assets/gradescope_mcp_ant.png)
+Canvas MCP is a set of tools that allows your AI agents to interact with Canvas LMS.
 
 ![example](assets/example.png)
 
@@ -12,7 +10,6 @@ Canvas MCP is a set of tools that allows your AI agents to interact with Canvas 
 
 - **Find relevant resources** - Ability to find relevant resources for a given query in natural language!
 - **Query upcoming assignments** - Not only fetch upcoming assignments, but also provide its breakdown for a given course.
-- **Get courses and assignments from Gradescope** - Query your Gradescope courses and assignments with natural language, get submission status, and more!
 - Get courses
 - Get modules
 - Get module items
@@ -25,9 +22,7 @@ Canvas MCP is a set of tools that allows your AI agents to interact with Canvas 
 
 Note down the following beforehand:
 1. Canvas API Key from `Canvas > Account > Settings > Approved Integrations > New Access Token`
-2. Gemini API key from https://aistudio.google.com/app/apikey
-3. Gradescope Email and Password https://www.gradescope.com/
-   
+
 ### Installing via Smithery (**Preferred**)
 
 To install Canvas MCP for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@aryankeluskar/canvas-mcp):
@@ -71,11 +66,24 @@ pip install -r requirements.txt
 
 ### Manual Configuration
 
-Create a `.env` file in the root directory with the following environment variables:
+You have two options for configuring the Canvas API key:
+
+#### Option 1: Using Environment Variables
+
+Create a `.env` file in the root directory with the following environment variable:
 
 ```
 CANVAS_API_KEY=your_canvas_api_key
-GEMINI_API_KEY=your_gemini_api_key
+```
+
+#### Option 2: Hard-Coding the API Key (Recommended for Personal Use)
+
+Open `canvas.py` and set the `HARD_CODED_CANVAS_API_KEY` constant at the top of the file:
+
+```python
+# Hard-coded API key (replace with your actual API key if you don't want to use environment variables)
+# If this is set, it will be used instead of looking for environment variables
+HARD_CODED_CANVAS_API_KEY = "your_canvas_api_key"
 ```
 
 Add the following to your `mcp.json` or `claude_desktop_config.json` file:
