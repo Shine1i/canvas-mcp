@@ -1035,7 +1035,18 @@ async def get_course_assignments(course_id: Union[int, str], bucket: Optional[st
         bucket: Optional filter - past, overdue, undated, ungraded, unsubmitted, upcoming, future
 
     Returns:
-        List[Dict]: List of assignment objects with details, or None if an error occurs
+        List[Dict]: List of assignment objects with details, or None if an error occurs.
+                   Each assignment includes:
+                   - id: The assignment ID
+                   - name: The assignment name
+                   - description: The assignment description
+                   - due_at: The due date (ISO format)
+                   - has_submitted_submissions: Whether any submissions have been made (not specific to current user)
+                   - user_submitted: Whether the current user has submitted the assignment
+                   - submission_status: The status of the current user's submission (e.g., "submitted", "unsubmitted")
+                   - submission_id: The ID of the current user's submission (if available)
+                   - submission_score: The score of the current user's submission (if available)
+                   - submission_grade: The grade of the current user's submission (if available)
     """
     # Check cache first
     cache_key = f"{course_id}_{bucket if bucket else 'all'}"
@@ -1084,16 +1095,30 @@ async def get_course_assignments(course_id: Union[int, str], bucket: Optional[st
         assignments = response.json()
 
         # Extract relevant fields
-        simplified_assignments = [
-            {
+        simplified_assignments = []
+        for assignment in assignments:
+            # Create base assignment object
+            simplified_assignment = {
                 "id": assignment["id"],
                 "name": assignment["name"],
                 "description": assignment.get("description", ""),
                 "due_at": assignment.get("due_at"),
                 "has_submitted_submissions": assignment.get("has_submitted_submissions", False)
-            } 
-            for assignment in assignments
-        ]
+            }
+
+            # Add submission information if available
+            if "submission" in assignment:
+                submission = assignment["submission"]
+                simplified_assignment["user_submitted"] = submission.get("workflow_state") == "submitted"
+                simplified_assignment["submission_status"] = submission.get("workflow_state", "unsubmitted")
+                simplified_assignment["submission_id"] = submission.get("id")
+                simplified_assignment["submission_score"] = submission.get("score")
+                simplified_assignment["submission_grade"] = submission.get("grade")
+            else:
+                simplified_assignment["user_submitted"] = False
+                simplified_assignment["submission_status"] = "unsubmitted"
+
+            simplified_assignments.append(simplified_assignment)
 
         # Store in cache
         Cache.set("assignments", simplified_assignments, cache_key)
@@ -1215,11 +1240,22 @@ async def test_assignments():
 async def get_unfinished_assignments():
     """Use this tool to retrieve all unfinished assignments across all Canvas courses.
 
-    This tool returns a list of assignments that have not been submitted yet, sorted by due date.
+    This tool returns a list of assignments that have not been submitted yet by the current user and are not past due,
+    sorted by due date. Only assignments with due dates in the future are included.
     Use this when you need to help users track their pending work or create a to-do list.
 
     Returns:
-        List[Dict]: List of unfinished assignments with course name, due date, and other details
+        List[Dict]: List of unfinished assignments with course name, due date, days/hours left, and other details.
+                   Each assignment includes:
+                   - id: The assignment ID
+                   - name: The assignment name
+                   - course_name: The name of the course
+                   - course_id: The ID of the course
+                   - due_at: The due date (ISO format)
+                   - days_left: Number of days until the due date
+                   - hours_left: Number of hours until the due date
+                   - description: The assignment description
+                   - submission_status: The status of the current user's submission (e.g., "unsubmitted")
     """
     try:
         # Get all courses
@@ -1237,25 +1273,41 @@ async def get_unfinished_assignments():
             if not assignments:
                 continue
 
-            # Filter unfinished assignments
-            unfinished = [
-                {
-                    "id": assignment["id"],
-                    "name": assignment["name"],
-                    "course_name": course_name,
-                    "course_id": course_id,
-                    "due_at": assignment["due_at"],
-                    "description": assignment.get("description", "")
-                }
-                for assignment in assignments
-                if not assignment.get("has_submitted_submissions", False)
-            ]
+            # Filter unfinished assignments with due dates that are not past due
+            now = datetime.now().replace(tzinfo=None)
+            unfinished = []
+
+            for assignment in assignments:
+                # Check if the assignment has a due date and has not been submitted by the user
+                if assignment.get("due_at") is not None and not assignment.get("user_submitted", False):
+                    # Parse the due date
+                    due_date_str = assignment["due_at"]
+                    try:
+                        # Convert ISO format to datetime
+                        due_date = datetime.fromisoformat(due_date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+
+                        # Check if it's in the future
+                        if now <= due_date:
+                            unfinished.append({
+                                "id": assignment["id"],
+                                "name": assignment["name"],
+                                "course_name": course_name,
+                                "course_id": course_id,
+                                "due_at": assignment["due_at"],
+                                "days_left": (due_date - now).days,
+                                "hours_left": int((due_date - now).total_seconds() / 3600),
+                                "description": assignment.get("description", ""),
+                                "submission_status": assignment.get("submission_status", "unsubmitted")
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error parsing due date '{due_date_str}': {e}")
+                        continue
 
             all_unfinished.extend(unfinished)
 
         # Sort by due date (None values at the end)
         all_unfinished.sort(
-            key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")) 
+            key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")).replace(tzinfo=None) 
             if x["due_at"] else datetime.max
         )
 
@@ -1267,17 +1319,27 @@ async def get_unfinished_assignments():
         return {"error": f"Error retrieving unfinished assignments: {str(e)}"}
 
 @mcp.tool()
-async def get_upcoming_deadlines(days: int = 7):
+async def get_upcoming_deadlines(days: int = 14):
     """Use this tool to retrieve all upcoming assignment deadlines across all Canvas courses.
 
     This tool returns a list of assignments due within the specified number of days,
     sorted by due date. Use this when helping users plan their work or manage their time.
 
     Args:
-        days: Number of days to look ahead (default: 7)
+        days: Number of days to look ahead (default: 14)
 
     Returns:
-        List[Dict]: List of upcoming assignments with course name, due date, and other details
+        List[Dict]: List of upcoming assignments with course name, due date, and other details.
+                   Each assignment includes:
+                   - id: The assignment ID
+                   - name: The assignment name
+                   - course_name: The name of the course
+                   - course_id: The ID of the course
+                   - due_at: The due date (ISO format)
+                   - days_left: Number of days until the due date
+                   - hours_left: Number of hours until the due date
+                   - submitted: Whether the current user has submitted the assignment
+                   - submission_status: The status of the current user's submission (e.g., "submitted", "unsubmitted")
     """
     try:
         # Get all courses
@@ -1319,7 +1381,8 @@ async def get_upcoming_deadlines(days: int = 7):
                             "due_at": assignment["due_at"],
                             "days_left": (due_date - now).days,
                             "hours_left": int((due_date - now).total_seconds() / 3600),
-                            "submitted": assignment.get("has_submitted_submissions", False)
+                            "submitted": assignment.get("user_submitted", False),
+                            "submission_status": assignment.get("submission_status", "unsubmitted")
                         })
                 except Exception as e:
                     logger.warning(f"Error parsing due date '{due_date_str}': {e}")
@@ -1328,7 +1391,7 @@ async def get_upcoming_deadlines(days: int = 7):
             all_upcoming.extend(upcoming)
 
         # Sort by due date
-        all_upcoming.sort(key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")))
+        all_upcoming.sort(key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")).replace(tzinfo=None))
 
         logger.info(f"Found {len(all_upcoming)} assignments due in the next {days} days")
         return all_upcoming
@@ -1430,7 +1493,7 @@ async def get_course_announcements(days: int = 14):
 
         # Sort by posted date (newest first)
         all_announcements.sort(
-            key=lambda x: datetime.fromisoformat(x["posted_at"].replace("Z", "+00:00")),
+            key=lambda x: datetime.fromisoformat(x["posted_at"].replace("Z", "+00:00")).replace(tzinfo=None),
             reverse=True
         )
 
@@ -1539,6 +1602,113 @@ async def get_course_grades():
 async def get_canvas_courses():
     """Use this tool to retrieve all available Canvas courses for the current user. This is an alias for get_courses. Use this when you need to find course IDs based on names or display all available courses."""
     return await get_courses()
+
+@mcp.tool()
+async def get_missing_submissions(user_id: Union[int, str], observed_user_id: Optional[str] = None, 
+                                 include: Optional[List[str]] = None, filter_options: Optional[List[str]] = None,
+                                 course_ids: Optional[List[str]] = None):
+    """Use this tool to retrieve a list of past-due assignments for which the student does not have a submission.
+
+    This tool returns a paginated list of assignments that are past due and have not been submitted.
+    The user sending the request must either be the student, an admin, or a parent observer using the parent app.
+
+    Args:
+        user_id: The student's ID
+        observed_user_id: Return missing submissions for the given observed user. 
+                         Must be accompanied by course_ids[]. The user making the request 
+                         must be observing the observed user in all the courses specified by course_ids[].
+        include: Optional list of related information to include:
+                - "planner_overrides": Include the assignment's associated planner override
+                - "course": Include the assignments' courses
+        filter_options: Optional list of filters to apply:
+                - "submittable": Only return assignments that the current user can submit
+                - "current_grading_period": Only return missing assignments in the current grading period
+        course_ids: Optionally restricts the list of past-due assignments to only those 
+                   associated with the specified course IDs. Required if observed_user_id is passed.
+
+    Returns:
+        List[Dict]: List of past-due assignments without submissions, or error information
+    """
+    try:
+        # Validate parameters
+        if observed_user_id and not course_ids:
+            logger.error("observed_user_id requires course_ids to be specified")
+            return {"error": "observed_user_id requires course_ids to be specified"}
+
+        # Get API key
+        api_key = Config.get_api_key()
+        if not api_key:
+            return {"error": "No Canvas API key available"}
+
+        # Construct API URL
+        url = Config.get_api_url(f"users/{user_id}/missing_submissions")
+
+        # Set up request parameters
+        params = {
+            "per_page": 100  # Get max assignments per page
+        }
+
+        # Add optional parameters
+        if observed_user_id:
+            params["observed_user_id"] = observed_user_id
+
+        if include:
+            params["include[]"] = include
+
+        if filter_options:
+            params["filter[]"] = filter_options
+
+        if course_ids:
+            params["course_ids[]"] = course_ids
+
+        headers = {
+            "Authorization": f"Bearer {api_key}"
+        }
+
+        # Make API request with timeout
+        response = requests.get(
+            url, 
+            headers=headers, 
+            params=params,
+            timeout=Config.REQUEST_TIMEOUT
+        )
+
+        # Check response status
+        if response.status_code != 200:
+            logger.error(f"Canvas API returned status code {response.status_code} for missing submissions")
+            logger.error(f"Response: {response.text}")
+            return {"error": f"Canvas API returned status code {response.status_code}", "details": response.text}
+
+        # Process response
+        missing_submissions = response.json()
+
+        # Add additional information to each assignment
+        now = datetime.now().replace(tzinfo=None)
+        for assignment in missing_submissions:
+            if assignment.get("due_at"):
+                try:
+                    # Convert ISO format to datetime
+                    due_date = datetime.fromisoformat(assignment["due_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+
+                    # Calculate days and hours overdue
+                    if due_date < now:
+                        days_overdue = (now - due_date).days
+                        hours_overdue = int((now - due_date).total_seconds() / 3600)
+
+                        assignment["days_overdue"] = days_overdue
+                        assignment["hours_overdue"] = hours_overdue
+                except Exception as e:
+                    logger.warning(f"Error parsing due date '{assignment.get('due_at')}': {e}")
+
+        logger.info(f"Retrieved {len(missing_submissions)} missing submissions for user {user_id}")
+        return missing_submissions
+
+    except requests.RequestException as e:
+        logger.error(f"Error connecting to Canvas API for missing submissions: {e}")
+        return {"error": f"Error connecting to Canvas API: {str(e)}"}
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_missing_submissions: {e}")
+        return {"error": f"Unexpected error: {str(e)}"}
 
 
 @mcp.tool()
@@ -1750,6 +1920,45 @@ async def run_tests():
     except Exception as e:
         logger.exception("Course grades test failed")
         results["course_grades"] = {"success": False, "error": str(e)}
+
+    logger.info("=" * 50)
+
+    # Test missing submissions
+    logger.info("Testing missing submissions...")
+    try:
+        # Get the user ID from the first course's enrollment
+        user_id = None
+        courses = await get_courses()
+        if courses:
+            # Get API key
+            api_key = Config.get_api_key()
+            if api_key:
+                # Get course details with enrollments
+                first_course_id = next(iter(courses.values()))
+                url = Config.get_api_url(f"courses/{first_course_id}")
+                headers = {"Authorization": f"Bearer {api_key}"}
+                params = {"include[]": "enrollments"}
+
+                response = requests.get(url, headers=headers, params=params, timeout=Config.REQUEST_TIMEOUT)
+                if response.status_code == 200:
+                    course_data = response.json()
+                    if "enrollments" in course_data and course_data["enrollments"]:
+                        user_id = course_data["enrollments"][0].get("user_id")
+
+        if user_id:
+            # Test the missing submissions endpoint
+            missing = await get_missing_submissions(user_id=user_id)
+            results["missing_submissions"] = {
+                "success": missing is not None and not isinstance(missing, dict),
+                "count": len(missing) if isinstance(missing, list) else 0
+            }
+            logger.info(f"Missing submissions test: {'SUCCESS' if isinstance(missing, list) else 'FAILED'}")
+        else:
+            logger.warning("Could not determine user ID for missing submissions test")
+            results["missing_submissions"] = {"success": False, "error": "Could not determine user ID"}
+    except Exception as e:
+        logger.exception("Missing submissions test failed")
+        results["missing_submissions"] = {"success": False, "error": str(e)}
 
     logger.info("=" * 50)
 
