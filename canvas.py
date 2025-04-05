@@ -1212,6 +1212,330 @@ async def test_assignments():
 # Add MCP tools for Gradescope
 
 @mcp.tool()
+async def get_unfinished_assignments():
+    """Use this tool to retrieve all unfinished assignments across all Canvas courses.
+
+    This tool returns a list of assignments that have not been submitted yet, sorted by due date.
+    Use this when you need to help users track their pending work or create a to-do list.
+
+    Returns:
+        List[Dict]: List of unfinished assignments with course name, due date, and other details
+    """
+    try:
+        # Get all courses
+        courses = await get_courses()
+        if not courses:
+            logger.error("Could not fetch courses")
+            return {"error": "Could not fetch courses"}
+
+        all_unfinished = []
+
+        # For each course, get assignments and filter unfinished ones
+        for course_name, course_id in courses.items():
+            # Get assignments for this course
+            assignments = await get_course_assignments(course_id)
+            if not assignments:
+                continue
+
+            # Filter unfinished assignments
+            unfinished = [
+                {
+                    "id": assignment["id"],
+                    "name": assignment["name"],
+                    "course_name": course_name,
+                    "course_id": course_id,
+                    "due_at": assignment["due_at"],
+                    "description": assignment.get("description", "")
+                }
+                for assignment in assignments
+                if not assignment.get("has_submitted_submissions", False)
+            ]
+
+            all_unfinished.extend(unfinished)
+
+        # Sort by due date (None values at the end)
+        all_unfinished.sort(
+            key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")) 
+            if x["due_at"] else datetime.max
+        )
+
+        logger.info(f"Found {len(all_unfinished)} unfinished assignments across all courses")
+        return all_unfinished
+
+    except Exception as e:
+        logger.exception(f"Error retrieving unfinished assignments: {e}")
+        return {"error": f"Error retrieving unfinished assignments: {str(e)}"}
+
+@mcp.tool()
+async def get_upcoming_deadlines(days: int = 7):
+    """Use this tool to retrieve all upcoming assignment deadlines across all Canvas courses.
+
+    This tool returns a list of assignments due within the specified number of days,
+    sorted by due date. Use this when helping users plan their work or manage their time.
+
+    Args:
+        days: Number of days to look ahead (default: 7)
+
+    Returns:
+        List[Dict]: List of upcoming assignments with course name, due date, and other details
+    """
+    try:
+        # Get all courses
+        courses = await get_courses()
+        if not courses:
+            logger.error("Could not fetch courses")
+            return {"error": "Could not fetch courses"}
+
+        all_upcoming = []
+        now = datetime.now().replace(tzinfo=None)
+        cutoff = now + datetime.timedelta(days=days)
+
+        # For each course, get assignments and filter upcoming ones
+        for course_name, course_id in courses.items():
+            # Get assignments for this course
+            assignments = await get_course_assignments(course_id)
+            if not assignments:
+                continue
+
+            # Filter upcoming assignments
+            upcoming = []
+            for assignment in assignments:
+                if not assignment.get("due_at"):
+                    continue
+
+                # Parse the due date
+                due_date_str = assignment["due_at"]
+                try:
+                    # Convert ISO format to datetime
+                    due_date = datetime.fromisoformat(due_date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+
+                    # Check if it's within the specified days
+                    if now <= due_date <= cutoff:
+                        upcoming.append({
+                            "id": assignment["id"],
+                            "name": assignment["name"],
+                            "course_name": course_name,
+                            "course_id": course_id,
+                            "due_at": assignment["due_at"],
+                            "days_left": (due_date - now).days,
+                            "hours_left": int((due_date - now).total_seconds() / 3600),
+                            "submitted": assignment.get("has_submitted_submissions", False)
+                        })
+                except Exception as e:
+                    logger.warning(f"Error parsing due date '{due_date_str}': {e}")
+                    continue
+
+            all_upcoming.extend(upcoming)
+
+        # Sort by due date
+        all_upcoming.sort(key=lambda x: datetime.fromisoformat(x["due_at"].replace("Z", "+00:00")))
+
+        logger.info(f"Found {len(all_upcoming)} assignments due in the next {days} days")
+        return all_upcoming
+
+    except Exception as e:
+        logger.exception(f"Error retrieving upcoming deadlines: {e}")
+        return {"error": f"Error retrieving upcoming deadlines: {str(e)}"}
+
+@mcp.tool()
+async def get_course_announcements(days: int = 14):
+    """Use this tool to retrieve recent announcements from all Canvas courses.
+
+    This tool returns a list of recent announcements from all courses, sorted by date.
+    Use this when helping users stay informed about important course updates.
+
+    Args:
+        days: Number of days to look back for announcements (default: 14)
+
+    Returns:
+        List[Dict]: List of recent announcements with course name, date, and content
+    """
+    try:
+        # Get all courses
+        courses = await get_courses()
+        if not courses:
+            logger.error("Could not fetch courses")
+            return {"error": "Could not fetch courses"}
+
+        all_announcements = []
+        cutoff_date = datetime.now() - datetime.timedelta(days=days)
+
+        # For each course, get announcements
+        for course_name, course_id in courses.items():
+            try:
+                # Get API key
+                api_key = Config.get_api_key()
+                if not api_key:
+                    continue
+
+                # Construct API URL for announcements
+                url = Config.get_api_url(f"courses/{course_id}/discussion_topics")
+
+                # Set up request parameters
+                params = {
+                    "only_announcements": True,
+                    "per_page": 20
+                }
+
+                headers = {
+                    "Authorization": f"Bearer {api_key}"
+                }
+
+                # Make API request with timeout
+                response = requests.get(
+                    url, 
+                    headers=headers, 
+                    params=params,
+                    timeout=Config.REQUEST_TIMEOUT
+                )
+
+                # Check response status
+                if response.status_code != 200:
+                    logger.error(f"Canvas API returned status code {response.status_code} for announcements")
+                    logger.error(f"Response: {response.text}")
+                    continue
+
+                # Process response
+                announcements = response.json()
+
+                # Filter recent announcements
+                for announcement in announcements:
+                    if not announcement.get("posted_at"):
+                        continue
+
+                    # Parse the posted date
+                    posted_date_str = announcement["posted_at"]
+                    try:
+                        # Convert ISO format to datetime
+                        posted_date = datetime.fromisoformat(posted_date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+
+                        # Check if it's within the specified days
+                        if posted_date >= cutoff_date:
+                            all_announcements.append({
+                                "id": announcement["id"],
+                                "title": announcement["title"],
+                                "message": announcement.get("message", ""),
+                                "course_name": course_name,
+                                "course_id": course_id,
+                                "posted_at": announcement["posted_at"],
+                                "url": announcement.get("html_url", "")
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error parsing posted date '{posted_date_str}': {e}")
+                        continue
+
+            except Exception as e:
+                logger.warning(f"Error fetching announcements for course {course_name}: {e}")
+                continue
+
+        # Sort by posted date (newest first)
+        all_announcements.sort(
+            key=lambda x: datetime.fromisoformat(x["posted_at"].replace("Z", "+00:00")),
+            reverse=True
+        )
+
+        logger.info(f"Found {len(all_announcements)} announcements from the last {days} days")
+        return all_announcements
+
+    except Exception as e:
+        logger.exception(f"Error retrieving course announcements: {e}")
+        return {"error": f"Error retrieving course announcements: {str(e)}"}
+
+@mcp.tool()
+async def get_course_grades():
+    """Use this tool to retrieve grades for all Canvas courses.
+
+    This tool returns a summary of grades for all enrolled courses.
+    Use this when helping users track their academic progress or check their grades.
+
+    Returns:
+        List[Dict]: List of courses with grade information
+    """
+    try:
+        # Get API key
+        api_key = Config.get_api_key()
+        if not api_key:
+            return {"error": "No Canvas API key available"}
+
+        # Construct API URL for grades
+        url = Config.get_api_url("courses")
+
+        # Set up request parameters
+        params = {
+            "include[]": ["total_scores", "current_grading_period_scores"],
+            "enrollment_state": "active",
+            "per_page": 100
+        }
+
+        headers = {
+            "Authorization": f"Bearer {api_key}"
+        }
+
+        # Make API request with timeout
+        response = requests.get(
+            url, 
+            headers=headers, 
+            params=params,
+            timeout=Config.REQUEST_TIMEOUT
+        )
+
+        # Check response status
+        if response.status_code != 200:
+            logger.error(f"Canvas API returned status code {response.status_code} for grades")
+            logger.error(f"Response: {response.text}")
+            return {"error": f"Canvas API returned status code {response.status_code}"}
+
+        # Process response
+        courses = response.json()
+
+        # Extract grade information
+        grades = []
+        for course in courses:
+            # Skip courses without enrollments
+            if not course.get("enrollments"):
+                continue
+
+            # Get the student enrollment
+            student_enrollment = None
+            for enrollment in course.get("enrollments", []):
+                if enrollment.get("type") == "student":
+                    student_enrollment = enrollment
+                    break
+
+            if not student_enrollment:
+                continue
+
+            # Extract grade information
+            grade_info = {
+                "id": course["id"],
+                "name": course["name"],
+                "code": course.get("course_code", ""),
+                "url": course.get("html_url", "")
+            }
+
+            # Add current grade information
+            if student_enrollment.get("computed_current_score") is not None:
+                grade_info["current_score"] = student_enrollment["computed_current_score"]
+                grade_info["current_grade"] = student_enrollment.get("computed_current_grade", "")
+
+            # Add final grade information
+            if student_enrollment.get("computed_final_score") is not None:
+                grade_info["final_score"] = student_enrollment["computed_final_score"]
+                grade_info["final_grade"] = student_enrollment.get("computed_final_grade", "")
+
+            grades.append(grade_info)
+
+        # Sort by course name
+        grades.sort(key=lambda x: x["name"])
+
+        logger.info(f"Retrieved grades for {len(grades)} courses")
+        return grades
+
+    except Exception as e:
+        logger.exception(f"Error retrieving course grades: {e}")
+        return {"error": f"Error retrieving course grades: {str(e)}"}
+
+@mcp.tool()
 async def get_canvas_courses():
     """Use this tool to retrieve all available Canvas courses for the current user. This is an alias for get_courses. Use this when you need to find course IDs based on names or display all available courses."""
     return await get_courses()
@@ -1366,6 +1690,66 @@ async def run_tests():
     except Exception as e:
         logger.exception("Assignments test failed")
         results["assignments"] = {"success": False, "error": str(e)}
+
+    logger.info("=" * 50)
+
+    # Test unfinished assignments
+    logger.info("Testing unfinished assignments...")
+    try:
+        unfinished = await get_unfinished_assignments()
+        results["unfinished_assignments"] = {
+            "success": unfinished is not None and not isinstance(unfinished, dict),
+            "count": len(unfinished) if isinstance(unfinished, list) else 0
+        }
+        logger.info(f"Unfinished assignments test: {'SUCCESS' if isinstance(unfinished, list) else 'FAILED'}")
+    except Exception as e:
+        logger.exception("Unfinished assignments test failed")
+        results["unfinished_assignments"] = {"success": False, "error": str(e)}
+
+    logger.info("=" * 50)
+
+    # Test upcoming deadlines
+    logger.info("Testing upcoming deadlines...")
+    try:
+        upcoming = await get_upcoming_deadlines(days=14)
+        results["upcoming_deadlines"] = {
+            "success": upcoming is not None and not isinstance(upcoming, dict),
+            "count": len(upcoming) if isinstance(upcoming, list) else 0
+        }
+        logger.info(f"Upcoming deadlines test: {'SUCCESS' if isinstance(upcoming, list) else 'FAILED'}")
+    except Exception as e:
+        logger.exception("Upcoming deadlines test failed")
+        results["upcoming_deadlines"] = {"success": False, "error": str(e)}
+
+    logger.info("=" * 50)
+
+    # Test course announcements
+    logger.info("Testing course announcements...")
+    try:
+        announcements = await get_course_announcements(days=30)
+        results["course_announcements"] = {
+            "success": announcements is not None and not isinstance(announcements, dict),
+            "count": len(announcements) if isinstance(announcements, list) else 0
+        }
+        logger.info(f"Course announcements test: {'SUCCESS' if isinstance(announcements, list) else 'FAILED'}")
+    except Exception as e:
+        logger.exception("Course announcements test failed")
+        results["course_announcements"] = {"success": False, "error": str(e)}
+
+    logger.info("=" * 50)
+
+    # Test course grades
+    logger.info("Testing course grades...")
+    try:
+        grades = await get_course_grades()
+        results["course_grades"] = {
+            "success": grades is not None and not isinstance(grades, dict),
+            "count": len(grades) if isinstance(grades, list) else 0
+        }
+        logger.info(f"Course grades test: {'SUCCESS' if isinstance(grades, list) else 'FAILED'}")
+    except Exception as e:
+        logger.exception("Course grades test failed")
+        results["course_grades"] = {"success": False, "error": str(e)}
 
     logger.info("=" * 50)
 
