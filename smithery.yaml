@@ -14,14 +14,6 @@ startCommand:
         type: string
         default: ""
         description: Google API key for Gemini services found at https://aistudio.google.com/app/apikey
-      gradescopeEmail:
-        type: string
-        default: ""
-        description: Gradescope email for accessing your courses.
-      gradescopePassword:
-        type: string
-        default: ""
-        description: Gradescope password for accessing your courses.
   commandFunction:
     # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
     |-
@@ -30,13 +22,9 @@ startCommand:
       args: ['canvas.py'],
       env: {
         CANVAS_API_KEY: config.canvasApiKey,
-        GOOGLE_API_KEY: config.googleApiKey,
-        GRADESCOPE_EMAIL: config.gradescopeEmail,
-        GRADESCOPE_PASSWORD: config.gradescopePassword
+        GOOGLE_API_KEY: config.googleApiKey
       }
     })
   exampleConfig:
     canvasApiKey: your_canvas_api_key
     googleApiKey: your_google_api_key
-    gradescopeEmail: your_gradescope_email
-    gradescopePassword: your_gradescope_password

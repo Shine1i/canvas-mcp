@@ -12,8 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Set environment variables (can be overridden at runtime)
 ENV CANVAS_API_KEY=""
 ENV GOOGLE_API_KEY=""
-ENV GRADESCOPE_EMAIL=""
-ENV GRADESCOPE_PASSWORD=""
 
 # Run the MCP server using canvas.py as the entry point
 CMD ["python", "canvas.py"]
